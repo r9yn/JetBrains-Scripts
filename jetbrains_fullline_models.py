@@ -67,10 +67,11 @@ MODEL_VERSIONS_BY_PROFILE = {
         "javascript": "0.1.41-native-llama-bundle",
         "kotlin": "0.1.247-native-llama-bundle",
         "php": "0.1.40-native-llama-bundle",
-        "python": "0.1.198-native-llama-bundle",
+        "python-v2": "0.1.198-native-llama-bundle",
         "ruby": "0.1.22-native-llama-bundle",
         "rust": "0.1.41-native-llama-bundle",
         "typescript": "0.1.41-native-llama-bundle",
+        "ws": "0.1.41-native-llama-bundle",
         "cpp": "0.1.52-native-llama-bundle",
         "csharp": "0.1.46-native-llama-bundle",
         "terraform": "0.1.20-native-llama-bundle",
@@ -83,19 +84,23 @@ MODEL_VERSION_PROFILE_ALIASES = {
 
 MODEL_ALIASES = {
     "c++": "cpp",
-    "js": "javascript",
-    "ts": "typescript",
+    "css": "ws",
+    "js": "ws",
+    "javascript": "ws",
+    "python": "python-v2",
+    "ts": "ws",
+    "typescript": "ws",
 }
 
 LOCAL_JAR_TAGS = {
-    "intellij.fullLine.css.local.jar": ("css",),
+    "intellij.fullLine.css.local.jar": ("ws",),
     "intellij.fullLine.go.local.jar": ("go",),
     "intellij.fullLine.html.local.jar": ("html",),
     "intellij.fullLine.java.local.jar": ("java",),
-    "intellij.fullLine.js.local.jar": ("javascript", "typescript"),
+    "intellij.fullLine.js.local.jar": ("ws",),
     "intellij.fullLine.kotlin.local.jar": ("kotlin",),
     "intellij.fullLine.php.local.jar": ("php",),
-    "intellij.fullLine.python.local.jar": ("python",),
+    "intellij.fullLine.python.local.jar": ("python-v2",),
     "intellij.fullLine.rider.cpp.local.jar": ("cpp",),
     "intellij.fullLine.rider.csharp.local.jar": ("csharp",),
     "intellij.fullLine.ruby.local.jar": ("ruby",),
@@ -535,10 +540,12 @@ def languages_for_model_name(name: str) -> tuple[str, ...]:
         return ("JAVA",)
     if name == "kotlin":
         return ("kotlin",)
+    if name in {"python", "python-v2"}:
+        return ("python", "python-v2")
     if name in {"go", "golang"}:
         return ("go",)
     if name == "ws":
-        return ("JavaScript", "TypeScript", "CSS")
+        return ("css", "javascript", "html", "ws")
     return (name,)
 
 

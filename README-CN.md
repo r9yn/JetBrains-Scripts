@@ -139,6 +139,10 @@ python3 jetbrains_fullline_models.py \
 
 只写模型 tag 时，例如 `--model kotlin`，脚本会根据内置 profile 选择默认版本。当前内置 profile 把 `2026.1.3` 映射到 build `261.25134.95`。
 
+Web 语言使用 JetBrains 共享的 `ws` 模型 tag。例如 `--model css`、`--model javascript`、`--model js`、`--model ts` 会从 `/models/ws/...` 下载，和 IDE 行为一致。
+
+Python 使用 JetBrains 的 `python-v2` 模型 tag。`--model python` 会从 `/models/python-v2/...` 下载。
+
 查看内置 profile：
 
 ```bash

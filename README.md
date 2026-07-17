@@ -141,6 +141,10 @@ python3 jetbrains_fullline_models.py \
 
 For bare model tags such as `--model kotlin`, the script chooses the default version from its built-in model profile. The built-in profile currently maps `2026.1.3` to build `261.25134.95`.
 
+Web languages use JetBrains' shared `ws` model tag. For example, `--model css`, `--model javascript`, `--model js`, and `--model ts` download from `/models/ws/...`, matching the IDE behavior.
+
+Python uses JetBrains' `python-v2` model tag. `--model python` downloads from `/models/python-v2/...`.
+
 List available built-in profiles:
 
 ```bash
