@@ -45,7 +45,7 @@ USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
 HEADERS = {"User-Agent": USER_AGENT}
 READY_FILENAME = "ready.flag"
 DEFAULT_OUTPUT = "dist"
-DEFAULT_MODEL_VERSION_PROFILE = "261.25134.95"
+DEFAULT_MODEL_VERSION_PROFILE = "263.7307.200"
 
 # The plugin determines this at runtime as:
 # LocalModelsDownloadManager.download()
@@ -55,11 +55,31 @@ DEFAULT_MODEL_VERSION_PROFILE = "261.25134.95"
 #
 # For LLAMA_NATIVE models, ModelSettings.versions selects nativeLLaMAVersion.
 # The defaults below are taken from the language supporter classes in
-# fullline/modules/intellij.fullLine.*.local.jar. Experiment classes may contain
-# additional versions; the normal download path uses the supporter default.
+# fullLine/lib/modules/intellij.fullLine.*.local.jar or lib/fullLine.jar.
+# Experiment classes may contain additional versions; the normal download path
+# uses the supporter default.
 MODEL_VERSIONS_BY_PROFILE = {
     # Full Line plugin 261.25134.95 bundled with IDEA 2026.1.3.
     "261.25134.95": {
+        "css": "0.1.41-native-llama-bundle",
+        "go": "0.1.39-native-llama-bundle",
+        "html": "0.1.12-native-llama-bundle",
+        "java": "0.1.87-native-llama-bundle",
+        "javascript": "0.1.41-native-llama-bundle",
+        "kotlin": "0.1.247-native-llama-bundle",
+        "php": "0.1.40-native-llama-bundle",
+        "python-v2": "0.1.198-native-llama-bundle",
+        "ruby": "0.1.22-native-llama-bundle",
+        "rust": "0.1.41-native-llama-bundle",
+        "typescript": "0.1.41-native-llama-bundle",
+        "ws": "0.1.41-native-llama-bundle",
+        "cpp": "0.1.52-native-llama-bundle",
+        "csharp": "0.1.46-native-llama-bundle",
+        "terraform": "0.1.20-native-llama-bundle",
+    },
+    # Full Line plugin 263.7307.200 bundled with IDEA 2026.3. The stable model
+    # defaults are unchanged; Kotlin also contains separate nightly versions.
+    "263.7307.200": {
         "css": "0.1.41-native-llama-bundle",
         "go": "0.1.39-native-llama-bundle",
         "html": "0.1.12-native-llama-bundle",
@@ -80,6 +100,7 @@ MODEL_VERSIONS_BY_PROFILE = {
 
 MODEL_VERSION_PROFILE_ALIASES = {
     "2026.1.3": "261.25134.95",
+    "2026.3": "263.7307.200",
 }
 
 MODEL_ALIASES = {
@@ -106,6 +127,13 @@ LOCAL_JAR_TAGS = {
     "intellij.fullLine.ruby.local.jar": ("ruby",),
     "intellij.fullLine.rust.local.jar": ("rust",),
     "intellij.fullLine.terraform.local.jar": ("terraform",),
+}
+
+# IDEA 2026.3 packages the Python supporter in the main plugin JAR instead of
+# intellij.fullLine.python.local.jar. Select its class explicitly because the
+# main JAR also contains supporters for other languages.
+MAIN_JAR_SUPPORTER_TAGS = {
+    "org/jetbrains/completion/full/line/python/PythonFullLineSupporter.class": ("python-v2",),
 }
 
 MODEL_VERSION_PATTERN = re.compile(rb"0\.1\.\d+(?:-[A-Za-z0-9_.-]+)?")
@@ -143,37 +171,56 @@ def log(message: str) -> None:
     print(message, file=sys.stderr)
 
 
-def read_url(url: str, *, timeout: int, retries: int) -> bytes:
+def check_download_response(response: requests.Response, url: str) -> None:
+    host = urllib.parse.urlsplit(response.url).hostname or ""
+    if response.status_code == 404 and host.endswith(".jetbrains.com.cn"):
+        raise requests.HTTPError(
+            f"JetBrains China CDN returned 404 for {url}. "
+            "Retry with --proxy <proxy-url> or set HTTPS_PROXY to use a working proxy.",
+            response=response,
+        )
+    response.raise_for_status()
+
+
+def download_should_retry(exc: Exception, attempt: int, retries: int) -> bool:
+    if isinstance(exc, requests.HTTPError) and exc.response is not None and exc.response.status_code == 404:
+        return False
+    return attempt < retries
+
+
+def read_url(url: str, *, timeout: int, retries: int, proxy: str | None = None) -> bytes:
+    proxies = {"http": proxy, "https": proxy} if proxy else None
     for attempt in range(1, retries + 1):
         try:
-            response = requests.get(url, headers=HEADERS, timeout=timeout)
-            response.raise_for_status()
-            return response.content
-        except Exception:
-            if attempt >= retries:
+            with requests.get(url, headers=HEADERS, timeout=timeout, proxies=proxies) as response:
+                check_download_response(response, url)
+                return response.content
+        except Exception as exc:
+            if not download_should_retry(exc, attempt, retries):
                 raise
             time.sleep(min(2 * attempt, 10))
     raise RuntimeError(f"Failed to read {url}")
 
 
-def download_file(url: str, destination: Path, *, timeout: int, retries: int) -> None:
+def download_file(url: str, destination: Path, *, timeout: int, retries: int, proxy: str | None = None) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     tmp = destination.with_suffix(destination.suffix + ".part")
+    proxies = {"http": proxy, "https": proxy} if proxy else None
 
     for attempt in range(1, retries + 1):
         try:
-            with requests.get(url, headers=HEADERS, timeout=timeout, stream=True) as response:
-                response.raise_for_status()
+            with requests.get(url, headers=HEADERS, timeout=timeout, stream=True, proxies=proxies) as response:
+                check_download_response(response, url)
                 with tmp.open("wb") as out:
                     for chunk in response.iter_content(chunk_size=1024 * 1024):
                         if chunk:
                             out.write(chunk)
             tmp.replace(destination)
             return
-        except Exception:
+        except Exception as exc:
             if tmp.exists():
                 tmp.unlink()
-            if attempt >= retries:
+            if not download_should_retry(exc, attempt, retries):
                 raise
             time.sleep(min(2 * attempt, 10))
     raise RuntimeError(f"Failed to download {url}")
@@ -367,6 +414,16 @@ def analyze_plugin_model_versions(plugin_dir: Path) -> tuple[str, dict[str, str]
     modules = find_modules_dir(root)
 
     model_versions: dict[str, str] = {}
+    for jar_path in (root / "lib" / "fullLine.jar", root / "fullLine.jar"):
+        if not jar_path.is_file():
+            continue
+        for class_name, tags in MAIN_JAR_SUPPORTER_TAGS.items():
+            version = read_default_model_version_from_jar(jar_path, class_name=class_name)
+            if version:
+                for tag in tags:
+                    model_versions[tag] = version
+
+    # Separate language modules take precedence when both layouts are present.
     for jar_path in sorted(modules.glob("intellij.fullLine*.local.jar")):
         tags = tags_for_local_jar(jar_path.name)
         if not tags:
@@ -444,11 +501,13 @@ def tags_for_local_jar(jar_name: str) -> tuple[str, ...]:
     return (normalize_model_tag(tag),)
 
 
-def read_default_model_version_from_jar(jar_path: Path) -> str | None:
+def read_default_model_version_from_jar(jar_path: Path, *, class_name: str | None = None) -> str | None:
     versions: list[str] = []
     with zipfile.ZipFile(jar_path) as archive:
         for name in archive.namelist():
             if not name.endswith("FullLineSupporter.class"):
+                continue
+            if class_name is not None and name != class_name:
                 continue
             versions.extend(read_model_versions_from_class(archive.read(name)))
     if not versions:
@@ -616,6 +675,7 @@ def install_model(
     arch: str,
     timeout: int,
     retries: int,
+    proxy: str | None = None,
 ) -> ModelSchema:
     repo = repository_for(request_entry.version, repository)
     schema_url = model_schema_url(
@@ -626,7 +686,7 @@ def install_model(
         maven_model_base=maven_model_base,
     )
     log(f"Download model schema: {schema_url}")
-    schema_data = read_url(schema_url, timeout=timeout, retries=retries)
+    schema_data = read_url(schema_url, timeout=timeout, retries=retries, proxy=proxy)
     schema = parse_model_schema(schema_data, tag=request_entry.tag, requested_uid=request_entry.uid, source=schema_url)
     folder = root / schema.uid
     folder.mkdir(parents=True, exist_ok=True)
@@ -643,7 +703,7 @@ def install_model(
             maven_model_base=maven_model_base,
         )
         log(f"Download model bundle: {jar_url}")
-        download_file(jar_url, jar_path, timeout=timeout, retries=retries)
+        download_file(jar_url, jar_path, timeout=timeout, retries=retries, proxy=proxy)
         extract_model_files(jar_path, folder, schema)
         jar_path.unlink(missing_ok=True)
     else:
@@ -662,7 +722,7 @@ def install_model(
                 arch=arch,
             )
             log(f"Download native server: {url}")
-            download_file(url, archive_path, timeout=timeout, retries=retries)
+            download_file(url, archive_path, timeout=timeout, retries=retries, proxy=proxy)
             extract_zip(archive_path, extracted)
             archive_path.unlink(missing_ok=True)
         else:
@@ -786,15 +846,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--model-profile",
         default=DEFAULT_MODEL_VERSION_PROFILE,
-        help="IDE/plugin version profile used for bare --model tags. Accepts a plugin build or alias like 2026.1.3.",
+        help=f"IDE/plugin version profile used for bare --model tags. Accepts a plugin build or alias like 2026.3. Default: {DEFAULT_MODEL_VERSION_PROFILE}.",
     )
     parser.add_argument(
         "--plugin-dir",
-        help="Extract model-profile and tag versions from an unpacked Full Line plugin directory.",
+        help="Extract model-profile and tag versions from an unpacked or installed Full Line plugin directory, including <IDE>.app/Contents/plugins/fullLine.",
     )
     parser.add_argument("--os", default=os_name_default(), help="Runtime OS path part. Default: current OS.")
     parser.add_argument("--arch", default=arch_default(), help="Runtime architecture path part. Default: current architecture.")
-    parser.add_argument("--list-models", action="store_true", help="Print built-in model tags and default versions, then exit.")
+    parser.add_argument("--proxy", help="HTTP(S) or SOCKS proxy URL for all downloads, for example http://127.0.0.1:7890. Default: requests/system proxy settings.")
+    parser.add_argument("--list-models", action="store_true", help="Print model tags and default versions for the selected profile/plugin, then exit.")
     parser.add_argument("--list-model-profiles", action="store_true", help="Print built-in model version profiles, then exit.")
     parser.add_argument("--timeout", type=int, default=60, help="Network timeout seconds. Default: 60.")
     parser.add_argument("--retries", type=int, default=3, help="Download retries. Default: 3.")
@@ -878,6 +939,7 @@ def main(argv: list[str]) -> int:
                 arch=safe_part(args.arch),
                 timeout=args.timeout,
                 retries=args.retries,
+                proxy=args.proxy,
             )
         )
 

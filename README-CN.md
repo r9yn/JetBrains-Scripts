@@ -137,7 +137,7 @@ python3 jetbrains_fullline_models.py \
 
 ### 模型版本
 
-只写模型 tag 时，例如 `--model kotlin`，脚本会根据内置 profile 选择默认版本。当前内置 profile 把 `2026.1.3` 映射到 build `261.25134.95`。
+只写模型 tag 时，例如 `--model kotlin`，脚本默认使用 IDEA `2026.3` 的内置 profile（build `263.7307.200`）。仍可通过 `--model-profile 2026.1.3` 使用旧版 profile（build `261.25134.95`）。
 
 Web 语言使用 JetBrains 共享的 `ws` 模型 tag。例如 `--model css`、`--model javascript`、`--model js`、`--model ts` 会从 `/models/ws/...` 下载，和 IDE 行为一致。
 
@@ -152,7 +152,7 @@ python3 jetbrains_fullline_models.py --list-model-profiles
 查看某个 profile 下的模型 tag 和默认版本：
 
 ```bash
-python3 jetbrains_fullline_models.py --model-profile 2026.1.3 --list-models
+python3 jetbrains_fullline_models.py --model-profile 2026.3 --list-models
 ```
 
 也可以显式指定模型版本，短版本和完整 bundle 版本都支持：
@@ -162,16 +162,20 @@ python3 jetbrains_fullline_models.py --model kotlin:0.1.163
 python3 jetbrains_fullline_models.py --model kotlin:0.1.163-native-llama-bundle
 ```
 
-如果本地已有解包后的 Full Line 插件目录，或 IDE 已安装的 Full Line 插件目录，可以让脚本直接分析里面的 profile 和模型版本。脚本支持反编译布局的 `resources/META-INF/plugin.xml` + `modules/`，也支持安装布局的 `lib/fullLine.jar` + `lib/modules/`：
+IDEA 2026.3 已将 Full Line 插件内置到应用程序目录。macOS 下可直接传入该目录，让脚本读取实际安装的插件 build 和模型版本：
 
 ```bash
 python3 jetbrains_fullline_models.py \
-  --plugin-dir "~/Library/Application Support/JetBrains/IntelliJIdea2026.1/plugins/fullLine" \
+  --plugin-dir "/Applications/IntelliJ IDEA.app/Contents/plugins/fullLine" \
   --model kotlin,java,go,html,css,javascript,python,rust,ruby \
   --output dist
 ```
 
 `--plugin-dir` 只影响模型 tag 和版本选择，不会覆盖目标运行平台。
+
+可以先用 `--plugin-dir "/Applications/IntelliJ IDEA.app/Contents/plugins/fullLine" --list-models` 查看检测结果。脚本会读取 `lib/fullLine.jar` 和 `lib/modules/`，包括 2026.3 移到主 JAR 中的 Python 模型版本。
+
+旧版用户插件目录（例如 `~/Library/Application Support/JetBrains/IntelliJIdea2026.1/plugins/fullLine`）和反编译布局（`resources/META-INF/plugin.xml` + `modules/`）仍然支持。
 
 ### 运行平台
 
@@ -186,6 +190,10 @@ python3 jetbrains_fullline_models.py \
 ```
 
 常用 OS 值包括 `macos`、`windows`、`linux`。常用架构值包括 `x86_64` 和 `arm_64`。
+
+如果下载跳转到 `download-cdn.*.jetbrains.com.cn` 后返回 404，可以通过 `--proxy http://127.0.0.1:7890` 指定可用代理（请替换成实际地址）。该参数同时用于模型描述、模型文件和推理运行时下载；未指定时沿用 `requests` 默认代理设置，包括 `HTTPS_PROXY` 环境变量。从 IDE 运行脚本时，可直接将 `--proxy` 加到运行参数中。
+
+脚本遇到 404 会立即报错；重新运行时会复用已完整解压的模型文件。
 
 ### 从模型 ZIP 读取版本
 

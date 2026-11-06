@@ -139,7 +139,7 @@ python3 jetbrains_fullline_models.py \
 
 ### Model Versions
 
-For bare model tags such as `--model kotlin`, the script chooses the default version from its built-in model profile. The built-in profile currently maps `2026.1.3` to build `261.25134.95`.
+For bare model tags such as `--model kotlin`, the script defaults to the built-in IDEA `2026.3` profile (build `263.7307.200`). Use `--model-profile 2026.1.3` to select the older profile (build `261.25134.95`).
 
 Web languages use JetBrains' shared `ws` model tag. For example, `--model css`, `--model javascript`, `--model js`, and `--model ts` download from `/models/ws/...`, matching the IDE behavior.
 
@@ -154,7 +154,7 @@ python3 jetbrains_fullline_models.py --list-model-profiles
 List model tags and versions for a profile:
 
 ```bash
-python3 jetbrains_fullline_models.py --model-profile 2026.1.3 --list-models
+python3 jetbrains_fullline_models.py --model-profile 2026.3 --list-models
 ```
 
 Override a model version explicitly:
@@ -164,16 +164,20 @@ python3 jetbrains_fullline_models.py --model kotlin:0.1.163
 python3 jetbrains_fullline_models.py --model kotlin:0.1.163-native-llama-bundle
 ```
 
-You can also read model versions from an unpacked or installed Full Line plugin. Both decompiled layouts (`resources/META-INF/plugin.xml` plus `modules/`) and installed layouts (`lib/fullLine.jar` plus `lib/modules/`) are supported:
+IDEA 2026.3 bundles Full Line in the application directory. On macOS, pass that directory to read the installed plugin build and model versions:
 
 ```bash
 python3 jetbrains_fullline_models.py \
-  --plugin-dir "~/Library/Application Support/JetBrains/IntelliJIdea2026.1/plugins/fullLine" \
+  --plugin-dir "/Applications/IntelliJ IDEA.app/Contents/plugins/fullLine" \
   --model kotlin,java,go,html,css,javascript,python,rust,ruby \
   --output dist
 ```
 
 `--plugin-dir` only affects model tag/version selection. It does not override the target runtime platform.
+
+Use `--plugin-dir "/Applications/IntelliJ IDEA.app/Contents/plugins/fullLine" --list-models` to inspect detected versions first. The script reads both `lib/fullLine.jar` and `lib/modules/`, including the Python model version moved into the main JAR in 2026.3.
+
+Older user plugin directories (such as `~/Library/Application Support/JetBrains/IntelliJIdea2026.1/plugins/fullLine`) and decompiled layouts (`resources/META-INF/plugin.xml` plus `modules/`) remain supported.
 
 ### Runtime Platform
 
@@ -188,6 +192,10 @@ python3 jetbrains_fullline_models.py \
 ```
 
 Common OS values are `macos`, `windows`, and `linux`. Common architecture values are `x86_64` and `arm_64`.
+
+If a download redirects to `download-cdn.*.jetbrains.com.cn` and returns 404, pass a working proxy with `--proxy http://127.0.0.1:7890` (replace the address as needed). This applies to model schemas, model bundles, and native runtimes. Without this option, the script uses the default `requests` proxy settings, including `HTTPS_PROXY`. When launching from an IDE, add `--proxy` to the script arguments.
+
+The script fails immediately on 404. Rerunning reuses model files that were already fully extracted.
 
 ### Bundled Model ZIPs
 
