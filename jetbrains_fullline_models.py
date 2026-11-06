@@ -21,9 +21,11 @@ The implementation follows the decompiled Full Line plugin logic in:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import posixpath
 import re
+import shutil
 import sys
 import time
 import urllib.parse
@@ -294,7 +296,9 @@ def parse_model_schema(data: bytes, *, tag: str, requested_uid: str | None, sour
     config_path = schema_file_path(root, "config", "flcc.json")
     native = parse_native_schema(root)
     languages = parse_languages(root) or languages_for_model_name(tag)
-    uid = requested_uid or schema_uid(root, tag=tag, version=version, languages=languages, source=source)
+    uid = schema_uid(version, languages)
+    if requested_uid is not None and str(uuid.UUID(requested_uid)) != uid:
+        raise RuntimeError(f"Requested model UID {requested_uid} does not match IDEA's computed UID {uid} for {source}")
 
     return ModelSchema(
         uid=uid,
@@ -352,19 +356,16 @@ def parse_languages(root: ET.Element) -> tuple[str, ...]:
             values.append(value)
         elif language.text and language.text.strip():
             values.append(language.text.strip())
-    return tuple(dict.fromkeys(values))
+    return tuple(values)
 
 
-def schema_uid(root: ET.Element, *, tag: str, version: str, languages: tuple[str, ...], source: str) -> str:
-    explicit = first_attr(root, ("uid", "uuid", "id", "modelUid", "modelId"))
-    explicit = explicit or first_text(root, ("uid", "uuid", "id", "modelUid", "modelId"))
-    if explicit:
-        return str(uuid.UUID(explicit))
-
-    fingerprint = "|".join([tag.lower(), version, ",".join(languages)])
-    generated = str(uuid.uuid3(uuid.NAMESPACE_URL, fingerprint))
-    log(f"No uid found in {source}; generated {generated} from {fingerprint!r}")
-    return generated
+def schema_uid(version: str, languages: tuple[str, ...]) -> str:
+    # ModelSchema.uid(): UUID.nameUUIDFromBytes() hashes UTF-8 bytes directly,
+    # without a namespace. Kotlin joinToString() uses ", " by default.
+    normalized_languages = ("java" if language == "java-v2" else language for language in languages)
+    fingerprint = f"{version}-{', '.join(normalized_languages)}"
+    digest = hashlib.md5(fingerprint.encode("utf-8"), usedforsecurity=False).digest()
+    return str(uuid.UUID(bytes=digest, version=3))
 
 
 def parse_model_request(value: str, model_versions: dict[str, str], profile: str) -> ModelRequest:
@@ -774,31 +775,76 @@ def extract_zip(path: Path, destination: Path) -> None:
             archive.extract(member, destination)
 
 
-def write_models_xml(root: Path, schemas: Iterable[ModelSchema]) -> Path:
+def write_models_xml(root: Path, schemas: Iterable[ModelSchema], *, preserve_existing: bool = True) -> Path:
     path = root / "models.xml"
     existing_by_uid: dict[str, ET.Element] = {}
-    if path.exists() and path.stat().st_size > 0:
-        try:
-            existing_root = parse_xml(path.read_bytes(), str(path))
-            for model in existing_root.findall(".//model"):
-                uid = first_text(model, ("uid", "uuid", "id", "modelUid", "modelId"))
-                if uid:
-                    existing_by_uid[str(uuid.UUID(uid))] = model
-        except Exception as exc:
-            log(f"Could not preserve existing models.xml entries ({exc}); rewriting it.")
+    if preserve_existing and path.exists() and path.stat().st_size > 0:
+        existing_root = parse_xml(path.read_bytes(), str(path))
+        for model in existing_root.findall(".//model"):
+            version = text_of(model, "version")
+            languages = parse_languages(model)
+            if not version or not languages:
+                raise RuntimeError(f"Cannot preserve a model without version/languages in {path}; use --repair-cache {root}")
+            existing_by_uid[schema_uid(version, languages)] = model
 
     for schema in schemas:
         existing_by_uid[schema.uid] = clone_element(schema.element)
 
-    models_root = ET.Element("LocalModelsSchema")
-    models = ET.SubElement(models_root, "models")
+    models_root = ET.Element("models", {"version": "1"})
     for _, element in sorted(existing_by_uid.items()):
-        models.append(element)
+        models_root.append(element)
 
     indent_xml(models_root)
     tree = ET.ElementTree(models_root)
     root.mkdir(parents=True, exist_ok=True)
-    tree.write(path, encoding="utf-8", xml_declaration=True)
+    temporary = path.with_suffix(".xml.part")
+    tree.write(temporary, encoding="utf-8", xml_declaration=True)
+    temporary.replace(path)
+    return path
+
+
+def repair_model_cache(root: Path) -> Path:
+    root = root.expanduser().resolve()
+    if not root.is_dir():
+        raise RuntimeError(f"Model cache directory does not exist: {root}")
+
+    # Preflight every rename before changing the cache. Existing destinations
+    # are never overwritten, even if they appear to contain the same model.
+    entries: list[tuple[Path, ModelSchema]] = []
+    seen: set[str] = set()
+    for folder in sorted(root.iterdir()):
+        model_xml = folder / "model.xml"
+        if not folder.is_dir() or not model_xml.is_file():
+            continue
+        data = model_xml.read_bytes()
+        languages = parse_languages(parse_xml(data, str(model_xml)))
+        if not languages:
+            raise RuntimeError(f"No model languages found in {model_xml}")
+        schema = parse_model_schema(data, tag=normalize_model_tag(languages[-1]), requested_uid=None, source=str(model_xml))
+        if not required_model_files_exist(folder, schema):
+            raise RuntimeError(f"Incomplete model files in {folder}; download the missing files before repairing the cache")
+        destination = root / schema.uid
+        if schema.uid in seen or (folder != destination and (destination.exists() or destination.is_symlink())):
+            raise RuntimeError(f"Cannot repair {folder}: model destination already exists: {destination}")
+        seen.add(schema.uid)
+        entries.append((folder, schema))
+    if not entries:
+        raise RuntimeError(f"No model.xml files found in {root}")
+
+    index = root / "models.xml"
+    # Keep the backup outside models/: IDEA treats unindexed files in models/
+    # as lost model directories during cleanup.
+    backup = root.parent / f"{root.name}-index.xml.bak"
+    if index.is_file() and not backup.exists():
+        shutil.copy2(index, backup)
+        log(f"Backed up model index: {backup}")
+    for folder, schema in entries:
+        destination = root / schema.uid
+        if folder != destination:
+            folder.rename(destination)
+            log(f"Renamed model directory: {folder.name} -> {destination.name}")
+    path = write_models_xml(root, (schema for _, schema in entries), preserve_existing=False)
+    log(f"Repaired {len(entries)} model cache entries: {path}")
     return path
 
 
@@ -825,7 +871,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--model",
         action="append",
         default=[],
-        help="Model as <tag>, <tag>:<version>, or <tag>:<version>:<uid>, for example kotlin. Repeatable; comma-separated values are also accepted.",
+        help="Model as <tag>, <tag>:<version>, or <tag>:<version>:<uid>, for example kotlin. An explicit UID must match IDEA's computed UID. Repeatable; comma-separated values are also accepted.",
     )
     parser.add_argument(
         "--model-zip",
@@ -837,6 +883,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--output",
         default=DEFAULT_OUTPUT,
         help=f"IDE system path or full-line/models path. Default: {DEFAULT_OUTPUT}",
+    )
+    parser.add_argument(
+        "--repair-cache",
+        metavar="MODELS_DIR",
+        help="Repair an existing model cache offline: rename model directories using IDEA UIDs and rebuild models.xml. Pass the models directory directly.",
     )
     parser.add_argument("--repository", choices=("auto", "cdn", "maven"), default="auto", help="Model/server repository. Default: auto.")
     parser.add_argument("--model-cdn-base", default=MODEL_CDN_BASE, help="Full Line model CDN base URL.")
@@ -891,6 +942,11 @@ def expand_model_values(values: list[str]) -> list[str]:
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    if args.repair_cache:
+        if args.model or args.model_zip:
+            raise SystemExit("--repair-cache cannot be combined with --model or --model-zip.")
+        repair_model_cache(Path(args.repair_cache))
+        return 0
     analyzed_profiles: dict[str, dict[str, str]] = {}
     profile = normalize_model_profile(args.model_profile)
     if args.plugin_dir:

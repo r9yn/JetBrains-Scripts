@@ -135,6 +135,16 @@ python3 jetbrains_fullline_models.py \
   --output ~/Library/Caches/JetBrains/IntelliJIdea2026.1
 ```
 
+`models.xml` 使用 IDEA 的 `<models version="1">` 格式，模型目录 UUID 按插件的 `ModelSchema.uid()` 算法计算。增量下载会保留索引中已有的其他模型。
+
+旧版脚本下载的模型可以直接离线修复，无需重新下载：
+
+```bash
+python3 jetbrains_fullline_models.py --repair-cache /path/to/full-line/models
+```
+
+`--repair-cache` 直接接收包含模型 UUID 子目录的目录。它会先检查文件和目标目录冲突，再重命名模型目录并重建索引；权重、推理运行时和 `ready.flag` 均保留。旧索引首次备份到模型目录外的 `full-line/models-index.xml.bak`。修复目标 IDE 的缓存前，请先退出 IDE。
+
 ### 模型版本
 
 只写模型 tag 时，例如 `--model kotlin`，脚本默认使用 IDEA `2026.3` 的内置 profile（build `263.7307.200`）。仍可通过 `--model-profile 2026.1.3` 使用旧版 profile（build `261.25134.95`）。
@@ -223,6 +233,21 @@ https://download.jetbrains.com/resources/ml/full-line/servers/<native_version>/<
 2. 把 `dist` 复制或发布到离线网络。
 3. 将 `dist/updatePlugins.xml` 配置为 IntelliJ custom plugin repository。
 4. 将 `full-line/models` 放到目标 IDE 的 system cache 目录，或纳入自己的离线部署流程。
+
+## 验证
+
+在本目录运行回归测试：
+
+```bash
+python3 -m unittest -v test_jetbrains_fullline_models
+```
+
+测试包含从 Windows IDEA 缓存记录的 UUID 样本。设置 `FULL_LINE_IDEA_HOME` 后，还会调用已安装插件的 XML 反序列化和模型就绪检查，验证生成的缓存可被读取：
+
+```bash
+FULL_LINE_IDEA_HOME="/Applications/IntelliJ IDEA.app" \
+  python3 -m unittest -v test_jetbrains_fullline_models
+```
 
 ## License
 

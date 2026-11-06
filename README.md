@@ -137,6 +137,16 @@ python3 jetbrains_fullline_models.py \
   --output ~/Library/Caches/JetBrains/IntelliJIdea2026.1
 ```
 
+`models.xml` uses IDEA's `<models version="1">` format, and model directory UUIDs follow the plugin's `ModelSchema.uid()` algorithm. Incremental downloads preserve other models already in the index.
+
+Repair caches produced by older script versions offline, without downloading the models again:
+
+```bash
+python3 jetbrains_fullline_models.py --repair-cache /path/to/full-line/models
+```
+
+Pass the directory containing the model UUID subdirectories directly to `--repair-cache`. It checks model files and destination conflicts before renaming directories and rebuilding the index. Model weights, native runtimes, and `ready.flag` files are retained. The original index is backed up once outside the models directory, at `full-line/models-index.xml.bak`. Exit the IDE before repairing its cache.
+
 ### Model Versions
 
 For bare model tags such as `--model kotlin`, the script defaults to the built-in IDEA `2026.3` profile (build `263.7307.200`). Use `--model-profile 2026.1.3` to select the older profile (build `261.25134.95`).
@@ -225,6 +235,21 @@ Versions containing `-beta` use JetBrains Packages by default. Use `--repository
 2. Copy or publish the generated `dist` directory to the offline network.
 3. Serve `dist/updatePlugins.xml` as an IntelliJ custom plugin repository.
 4. Put `full-line/models` under the target IDE system cache directory, or distribute it as part of your offline setup process.
+
+## Validation
+
+Run the regression tests from this directory:
+
+```bash
+python3 -m unittest -v test_jetbrains_fullline_models
+```
+
+The tests include UUIDs recorded from a Windows IDEA cache. Set `FULL_LINE_IDEA_HOME` to also validate the generated cache using the installed plugin's XML deserializer and model readiness checks:
+
+```bash
+FULL_LINE_IDEA_HOME="/Applications/IntelliJ IDEA.app" \
+  python3 -m unittest -v test_jetbrains_fullline_models
+```
 
 ## License
 
